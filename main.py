@@ -5,9 +5,9 @@ import cv2
 import numpy as np
 from sklearn.cluster import KMeans, DBSCAN
 import matplotlib.pyplot as plt
+from skimage import measure, filters, color
 from skimage.segmentation import watershed
-from skimage.feature import peak_local_max
-from scipy import ndimage
+from scipy import ndimage as ndi
 
 seeds = []
 
@@ -52,10 +52,24 @@ def apply_segmentation():
         labels = clustering.fit_predict(pixels)
         clustering_lab = DBSCAN(eps=eps, min_samples=min_samples)
         labels_lab = clustering_lab.fit_predict(pixels_lab)
-    elif seeds:
+    # elif segmentation_method.get() == "Region Growing Advanced":
+    #     if seeds:
+    #         output_image = grow_region_advanced(image_cv, seeds)
+    #         output_image = Image.fromarray(output_image)
+    #         img_tk = ImageTk.PhotoImage(output_image)
+    #         label_image.config(image=img_tk)
+    #         label_image.image = img_tk
+    elif segmentation_method.get() == "Seed Growing" and seeds:
         output_image = grow_region(image_cv, seeds)
         output_image = Image.fromarray(output_image)  # Преобразуем обратно в PIL Image для отображения в Tkinter
         img_tk = ImageTk.PhotoImage(output_image)
+        label_image.config(image=img_tk)
+        label_image.image = img_tk
+    elif segmentation_method.get() == "Watershed":
+        output_image = apply_watershed(image_cv)
+        output_image = (output_image * 255).astype(np.uint8)  # Убедимся, что данные в правильном формате
+        img_pil = Image.fromarray(output_image)  # Преобразуем массив в PIL Image
+        img_tk = ImageTk.PhotoImage(img_pil)  # Теперь создаем PhotoImage
         label_image.config(image=img_tk)
         label_image.image = img_tk
 
@@ -93,8 +107,60 @@ def apply_segmentation():
     plt.show()
 
 
+# def grow_region_advanced(image, seeds, delta=30):
+#     # Преобразуем изображение в массив
+#     img_array = np.array(image)
+#     # Маска для отслеживания принадлежности к региону
+#     region_mask = np.zeros(img_array.shape[:2], dtype=int)
+#     region_index = 1
+#
+#     # Регионы и их статистика
+#     regions = {}
+#
+#     for seed in seeds:
+#         x, y = seed
+#         regions[region_index] = {
+#             'pixels': [(x, y)],
+#             'intensity': img_array[x, y],
+#             'average_intensity': img_array[x, y]
+#         }
+#         region_mask[x, y] = region_index
+#         region_index += 1
+#
+#     def update_region_stats(region_id, new_pixel):
+#         x, y = new_pixel
+#         region = regions[region_id]
+#         region['pixels'].append((x, y))
+#         new_avg = np.mean([img_array[p] for p in region['pixels']], axis=0)
+#         regions[region_id]['average_intensity'] = new_avg
+#
+#     # Проверка пикселей для добавления в регионы
+#     for region_id, data in regions.items():
+#         to_check = data['pixels'][:]
+#         while to_check:
+#             x, y = to_check.pop(0)
+#             for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+#                 nx, ny = x + dx, y + dy
+#                 if 0 <= nx < img_array.shape[0] and 0 <= ny < img_array.shape[1] and region_mask[nx, ny] == 0:
+#                     current_intensity = img_array[nx, ny]
+#                     intensity_diff = np.linalg.norm(current_intensity - data['average_intensity'])
+#
+#                     # Проверяем условия для включения пикселя в регион
+#                     if intensity_diff < delta:
+#                         region_mask[nx, ny] = region_id
+#                         update_region_stats(region_id, (nx, ny))
+#                         to_check.append((nx, ny))
+#
+#     # Создаем изображение результата
+#     output_image = np.zeros_like(img_array)
+#     for region_id, data in regions.items():
+#         for px in data['pixels']:
+#             output_image[px] = data['average_intensity']
+#
+#     return output_image
 
-def grow_region(image, seeds, threshold=30):
+
+def grow_region(image, seeds, threshold=200):
     # Преобразуем изображение в массив
     img_array = np.array(image)
     # Маска для отслеживания посещенных и добавленных пикселей
@@ -120,6 +186,25 @@ def grow_region(image, seeds, threshold=30):
                         if color_diff < threshold:
                             to_grow.append((nx, ny))
     return output_image
+
+
+def apply_watershed(image):
+    # Преобразование в градации серого
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Вычисление градиента изображения
+    gradient = filters.sobel(gray)
+
+    # Идентификация маркеров (минимумы градиента)
+    markers = ndi.label(gradient < filters.threshold_otsu(gradient))[0]
+
+    # Применение метода водораздела
+    labels = watershed(gradient, markers)
+
+    # Преобразование меток в цветное изображение для визуализации
+    segmented_image = color.label2rgb(labels, image, kind='overlay')
+
+    return segmented_image
 
 
 def select_color(image, color):
@@ -169,7 +254,8 @@ rb_color = tk.Radiobutton(root, text="Color Segmentation", variable=segment_type
 rb_color.pack()
 
 segmentation_method = StringVar(value="KMeans")
-segmentation_menu = tk.OptionMenu(root, segmentation_method, "KMeans", "DBSCAN", "Region Growing", "Watershed", command=update_params)
+segmentation_menu = tk.OptionMenu(root, segmentation_method, "KMeans", "DBSCAN", "Seed Growing", "Watershed",
+                                  command=update_params)
 segmentation_menu.pack()
 
 label_clusters = Label(root, text="Number of Clusters:")
